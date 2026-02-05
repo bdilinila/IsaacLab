@@ -15,6 +15,7 @@ The following example shows how to wrap an environment for RSL-RL:
 
 """
 
+from .actor_critic_cnn import ActorCriticCNN
 from .distillation_cfg import *
 from .exporter import export_policy_as_jit, export_policy_as_onnx
 from .rl_cfg import *

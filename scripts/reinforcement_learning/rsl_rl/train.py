@@ -34,14 +34,26 @@ parser.add_argument("--export_io_descriptors", action="store_true", default=Fals
 parser.add_argument(
     "--ray-proc-id", "-rid", type=int, default=None, help="Automatically configured by Ray integration, otherwise None."
 )
+# Renderer backend arguments
+parser.add_argument(
+    "--renderer_backend",
+    type=str,
+    default=None,
+    choices=["warp_renderer_direct", "warp_renderer_interface"],
+    help="Renderer backend: 'warp_renderer_direct' (direct instantiation), 'warp_renderer_interface' (RendererBase interface)"
+)
+parser.add_argument("--render_interval", type=int, default=10, help="Render every N training steps when using custom renderer.")
+parser.add_argument("--save_images", action="store_true", default=False, help="Save rendered images to disk.")
+parser.add_argument("--image_width", type=int, default=400, help="Width of rendered images.")
+parser.add_argument("--image_height", type=int, default=400, help="Height of rendered images.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 
-# always enable cameras to record video
-if args_cli.video:
+# always enable cameras to record video or use custom renderer
+if args_cli.video or args_cli.renderer_backend:
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
@@ -113,6 +125,25 @@ torch.backends.cudnn.benchmark = False
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Train with RSL-RL agent."""
+    # Import custom renderer if needed
+    warp_renderer = None
+    if args_cli.renderer_backend in ["warp_renderer_direct", "warp_renderer_interface"]:
+        # Import custom runner for training integration
+        warp_renderer_path = os.path.join(os.path.dirname(__file__), "..", "..", "warp_renderer")
+        sys.path.insert(0, warp_renderer_path)
+        from warp_rendering_runner import WarpRenderingRunner
+        
+        # Import CNN policy for vision-based tasks
+        from isaaclab_rl.rsl_rl import ActorCriticCNN
+        
+        if args_cli.renderer_backend == "warp_renderer_direct":
+            # Direct instantiation of WarpRenderer
+            from warp_convert import WarpRenderer
+        elif args_cli.renderer_backend == "warp_renderer_interface":
+            # WarpRenderer with RendererBase interface
+            from warp_renderer_adapter import WarpRendererAdapter
+            from warp_renderer_adapter_cfg import WarpRendererAdapterCfg
+        
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
@@ -165,11 +196,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.log_dir = log_dir
 
     # create isaac environment
+    print(f"[VERBOSE] ============================================================")
+    print(f"[VERBOSE] Creating environment at {time.strftime('%H:%M:%S')}")
+    print(f"[VERBOSE] Task: {args_cli.task}")
+    print(f"[VERBOSE] Num envs: {env_cfg.scene.num_envs}")
+    print(f"[VERBOSE] Calling gym.make()...", flush=True)
+    print(f"[VERBOSE] ============================================================")
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    print(f"[VERBOSE] Environment created successfully at {time.strftime('%H:%M:%S')}", flush=True)
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
+        print(f"[VERBOSE] Converting multi-agent to single-agent...")
         env = multi_agent_to_single_agent(env)
+        print(f"[VERBOSE] Conversion complete")
 
     # save resume path before creating a new log_dir
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
@@ -190,17 +230,79 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     start_time = time.time()
 
     # wrap around environment for rsl-rl
+    print(f"[VERBOSE] Wrapping environment with RslRlVecEnvWrapper...", flush=True)
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    print(f"[VERBOSE] Environment wrapped successfully. Num envs: {env.unwrapped.scene.num_envs}", flush=True)
+
+    # Initialize custom renderer if requested
+    if args_cli.renderer_backend in ["warp_renderer_direct", "warp_renderer_interface"]:
+        print(f"[INFO] Initializing renderer backend: {args_cli.renderer_backend} ({args_cli.image_width}x{args_cli.image_height})...")
+        print(f"[VERBOSE] Starting renderer initialization at {time.strftime('%H:%M:%S')}...")
+        
+        if args_cli.renderer_backend == "warp_renderer_direct":
+            # Direct instantiation of WarpRenderer
+            warp_renderer = WarpRenderer(
+                env.unwrapped.scene,
+                width=args_cli.image_width,
+                height=args_cli.image_height
+            )
+        
+        elif args_cli.renderer_backend == "warp_renderer_interface":
+            # WarpRenderer with RendererBase interface
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "warp_renderer"))
+            from warp_renderer_adapter import WarpRendererAdapter
+            from warp_renderer_adapter_cfg import WarpRendererAdapterCfg
+            
+            renderer_cfg = WarpRendererAdapterCfg(
+                width=args_cli.image_width,
+                height=args_cli.image_height,
+                num_envs=env.unwrapped.scene.num_envs,
+            )
+            
+            # Pass scene separately to avoid pickling issues
+            warp_renderer = WarpRendererAdapter(renderer_cfg, scene=env.unwrapped.scene)
+            warp_renderer.initialize()
+        
+        print(f"[INFO] {args_cli.renderer_backend} renderer initialized with {env.unwrapped.scene.num_envs} worlds")
+        print(f"[VERBOSE] Renderer initialization completed at {time.strftime('%H:%M:%S')}")
+        
+        # Inject ActorCriticCNN into RSL-RL namespace for eval()
+        print(f"[VERBOSE] Injecting ActorCriticCNN into RSL-RL namespace...")
+        import rsl_rl.runners.on_policy_runner as runner_module
+        if not hasattr(runner_module, 'ActorCriticCNN'):
+            setattr(runner_module, 'ActorCriticCNN', ActorCriticCNN)
+        
+        # Set output directory for images
+        output_dir = os.path.join(log_dir, "renderer_images")
 
     # create runner from rsl-rl
-    if agent_cfg.class_name == "OnPolicyRunner":
+    print(f"[VERBOSE] Creating RL runner at {time.strftime('%H:%M:%S')}...")
+    if args_cli.renderer_backend and agent_cfg.class_name == "OnPolicyRunner":
+        # Use WarpRenderingRunner for custom renderer backend
+        print(f"[VERBOSE] Using WarpRenderingRunner with renderer backend: {args_cli.renderer_backend}")
+        runner = WarpRenderingRunner(
+            env=env,
+            train_cfg=agent_cfg.to_dict(),
+            log_dir=log_dir,
+            device=agent_cfg.device,
+            warp_renderer=warp_renderer,
+            render_interval=args_cli.render_interval,
+            save_images=args_cli.save_images,
+            output_dir=output_dir,
+        )
+        print(f"[VERBOSE] WarpRenderingRunner created successfully")
+    elif agent_cfg.class_name == "OnPolicyRunner":
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
+        print(f"[VERBOSE] Using DistillationRunner")
         runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+        print(f"[VERBOSE] Runner created successfully")
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     # write git state to logs
+    print(f"[VERBOSE] Adding git repo to log at {time.strftime('%H:%M:%S')}...")
     runner.add_git_repo_to_log(__file__)
+    print(f"[VERBOSE] Git repo added successfully")
     # load the checkpoint
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
@@ -208,11 +310,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         runner.load(resume_path)
 
     # dump the configuration into log-directory
+    print(f"[VERBOSE] Dumping configuration to log directory at {time.strftime('%H:%M:%S')}...", flush=True)
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    print(f"[VERBOSE] Configuration dumped successfully", flush=True)
 
     # run training
+    print(f"[VERBOSE] ============================================================", flush=True)
+    print(f"[VERBOSE] STARTING TRAINING at {time.strftime('%H:%M:%S')}", flush=True)
+    print(f"[VERBOSE] Max iterations: {agent_cfg.max_iterations}", flush=True)
+    print(f"[VERBOSE] ============================================================", flush=True)
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+    print(f"[VERBOSE] Training completed at {time.strftime('%H:%M:%S')}", flush=True)
 
     print(f"Training time: {round(time.time() - start_time, 2)} seconds")
 
