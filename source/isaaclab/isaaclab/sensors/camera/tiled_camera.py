@@ -235,7 +235,10 @@ class TiledCamera(Camera):
         # Increment frame count
         self._frame[env_ids] += 1
 
-        # update latest camera pose
+        # breakpoint()
+
+        # with wp.ScopedTimer(f"--- render ---", synchronize=True, print=True) as timer:
+            # update latest camera pose
         if self.cfg.update_latest_camera_pose:
             self._update_poses(env_ids)
 

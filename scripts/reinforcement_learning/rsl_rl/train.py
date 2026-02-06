@@ -95,6 +95,11 @@ from datetime import datetime
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
+from isaaclab.utils.timer import Timer
+
+Timer.enable = True
+Timer.enable_display_output = True
+
 from isaaclab.envs import (
     DirectMARLEnv,
     DirectMARLEnvCfg,

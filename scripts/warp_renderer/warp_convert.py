@@ -133,7 +133,7 @@ class WarpRenderer:
 
         print(f"[VERBOSE] Setting up camera rays...", flush=True)
         self.camera_fovs = wp.array([20.0] * self.render_context.num_cameras, dtype=wp.float32)
-        self.camera_rays = self.render_context.utils.compute_pinhole_camera_rays(self.camera_fovs)
+        self.camera_rays = self.render_context.utils.compute_pinhole_camera_rays(width, height, self.camera_fovs)
         self.color_image = self.render_context.create_color_image_output()
         print(f"[VERBOSE] WarpRenderer.__init__ complete!", flush=True)
 
@@ -218,7 +218,23 @@ class WarpRenderer:
         print(f"[VERBOSE] WarpRenderer.render() - render_context.render() completed!", flush=True)
 
     def save_image(self, filename: str):
-        color_data = self.render_context.utils.flatten_color_image_to_rgba(self.color_image)
+        # Reshape color_image from (num_worlds, num_cameras, height*width) 
+        # to (num_worlds, num_cameras, height, width)
+        num_worlds = self.color_image.shape[0]
+        num_cameras = self.color_image.shape[1]
+        height = self.render_context.height
+        width = self.render_context.width
+        
+        # Create a reshaped view of the color image
+        color_image_reshaped = wp.array(
+            ptr=self.color_image.ptr,
+            dtype=self.color_image.dtype,
+            shape=(num_worlds, num_cameras, height, width),
+            device=self.color_image.device,
+            copy=False
+        )
+        
+        color_data = self.render_context.utils.flatten_color_image_to_rgba(color_image_reshaped)
         
         from PIL import Image
         os.makedirs(os.path.dirname(filename), exist_ok=True)
