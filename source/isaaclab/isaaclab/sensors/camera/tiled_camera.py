@@ -191,6 +191,12 @@ class TiledCamera(Camera):
         if self.cfg.renderer_type == "newton_warp":
             # Use Newton Warp renderer
             from isaaclab.renderer import NewtonWarpRendererCfg, get_renderer_class
+            from isaaclab.sim._impl.newton_manager import NewtonManager
+
+            # Initialize Newton Manager if not already initialized
+            if not hasattr(NewtonManager, '_is_initialized') or not NewtonManager._is_initialized:
+                device_str = str(self.device).replace("cuda:", "cuda:")
+                NewtonManager.initialize(num_envs=self._num_envs, device=device_str)
 
             renderer_cfg = NewtonWarpRendererCfg(
                 width=self.cfg.width,
@@ -265,6 +271,11 @@ class TiledCamera(Camera):
 
         # Use Newton Warp renderer if configured
         if self._renderer is not None:
+            # Synchronize Newton state from PhysX/USDRT before rendering
+            from isaaclab.sim._impl.newton_manager import NewtonManager
+
+            NewtonManager.update_state_from_usdrt()
+
             # Call Newton Warp renderer to update output buffers
             self._renderer.render(self._data.pos_w, self._data.quat_w_world, self._data.intrinsic_matrices)
 
