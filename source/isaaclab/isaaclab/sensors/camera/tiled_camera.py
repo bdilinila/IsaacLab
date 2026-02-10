@@ -132,6 +132,10 @@ class TiledCamera(Camera):
         # reset the frame count
         self._frame[env_ids] = 0
 
+        # Reset renderer if using Newton Warp
+        if self._renderer is not None:
+            self._renderer.reset()
+
     """
     Implementation.
     """
@@ -183,7 +187,30 @@ class TiledCamera(Camera):
             sensor_prim = UsdGeom.Camera(cam_prim)
             self._sensor_prims.append(sensor_prim)
 
-        # Create replicator tiled render product
+        # Initialize renderer based on renderer_type
+        if self.cfg.renderer_type == "newton_warp":
+            # Use Newton Warp renderer
+            from isaaclab.renderer import NewtonWarpRendererCfg, get_renderer_class
+
+            renderer_cfg = NewtonWarpRendererCfg(
+                width=self.cfg.width,
+                height=self.cfg.height,
+                num_cameras=self._view.count,
+                num_envs=self._num_envs,
+                data_types=self.cfg.data_types,
+            )
+            renderer_cls = get_renderer_class("newton_warp")
+            if renderer_cls is None:
+                raise RuntimeError("Failed to load Newton Warp renderer class.")
+            self._renderer = renderer_cls(renderer_cfg)
+            self._renderer.initialize()
+            self._render_product_paths = []  # Not used with Newton Warp
+            self._annotators = dict()  # Not used with Newton Warp
+        else:
+            # Use default RTX rendering (existing code)
+            self._renderer = None
+
+            # Create replicator tiled render product
         rp = rep.create.render_product_tiled(
             cameras=self._view.prim_paths, tile_resolution=(self.cfg.width, self.cfg.height)
         )
@@ -236,7 +263,17 @@ class TiledCamera(Camera):
         if self.cfg.update_latest_camera_pose:
             self._update_poses(env_ids)
 
-        # Extract the flattened image buffer
+        # Use Newton Warp renderer if configured
+        if self._renderer is not None:
+            # Call Newton Warp renderer to update output buffers
+            self._renderer.render(self._data.pos_w, self._data.quat_w_world, self._data.intrinsic_matrices)
+
+            # Convert warp arrays to torch tensors and store in data.output
+            for data_type, output_buffer in self._renderer.get_output().items():
+                self._data.output[data_type] = wp.to_torch(output_buffer)
+            return
+
+        # Extract the flattened image buffer (RTX rendering path)
         for data_type, annotator in self._annotators.items():
             # check whether returned data is a dict (used for segmentation)
             output = annotator.get_data()
