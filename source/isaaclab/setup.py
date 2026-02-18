@@ -44,7 +44,7 @@ INSTALL_REQUIRES = [
     "pytest-mock",
     "junitparser",
     "coverage==7.6.1",
-    "flatdict>=3.4.0",
+    "flatdict>=3.4.0,<4.0.1", # suggested by greptile; 
     "flaky",
     "packaging",
     "newton @ git+https://github.com/newton-physics/newton.git@d435c418b6510f628fbb613736e2cfa4ad7968f3",
