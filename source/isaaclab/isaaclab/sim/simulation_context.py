@@ -520,7 +520,6 @@ class SimulationContext(_SimulationContext):
             raise exception_to_raise
         _t0 = _t.perf_counter()
         super().reset(soft=soft)
-        print(f"[PERF][simulation_context] reset(): super().reset() took {_t.perf_counter() - _t0:.3f} s", flush=True)
         # app.update() may be changing the cuda device in reset, so we force it back to our desired device here
         if "cuda" in self.device:
             torch.cuda.set_device(self.device)
