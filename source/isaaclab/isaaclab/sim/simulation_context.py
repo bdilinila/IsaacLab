@@ -510,24 +510,32 @@ class SimulationContext(_SimulationContext):
     """
 
     def reset(self, soft: bool = False):
+        import time as _t
+
         self._disable_app_control_on_stop_handle = True
         # check if we need to raise an exception that was raised in a callback
         if builtins.ISAACLAB_CALLBACK_EXCEPTION is not None:
             exception_to_raise = builtins.ISAACLAB_CALLBACK_EXCEPTION
             builtins.ISAACLAB_CALLBACK_EXCEPTION = None
             raise exception_to_raise
+        _t0 = _t.perf_counter()
         super().reset(soft=soft)
+        print(f"[PERF][simulation_context] reset(): super().reset() took {_t.perf_counter() - _t0:.3f} s", flush=True)
         # app.update() may be changing the cuda device in reset, so we force it back to our desired device here
         if "cuda" in self.device:
             torch.cuda.set_device(self.device)
         # enable kinematic rendering with fabric
         if self.physics_sim_view:
+            _t1 = _t.perf_counter()
             self.physics_sim_view._backend.initialize_kinematic_bodies()
+            print(f"[PERF][simulation_context] reset(): initialize_kinematic_bodies() took {_t.perf_counter() - _t1:.3f} s", flush=True)
         # perform additional rendering steps to warm up replicator buffers
         # this is only needed for the first time we set the simulation
         if not soft:
-            for _ in range(2):
+            for i in range(2):
+                _t2 = _t.perf_counter()
                 self.render()
+                print(f"[PERF][simulation_context] reset(): render() warmup {i+1}/2 took {_t.perf_counter() - _t2:.3f} s", flush=True)
         self._disable_app_control_on_stop_handle = False
 
     def forward(self) -> None:
@@ -576,7 +584,15 @@ class SimulationContext(_SimulationContext):
             self.app.update()
 
         # step the simulation
+        import time as _t
+
+        _t0 = _t.perf_counter()
         super().step(render=render)
+        if not hasattr(self, "_step_log_count"):
+            self._step_log_count = 0
+        self._step_log_count += 1
+        if self._step_log_count <= 3 or self._step_log_count % 100 == 0:
+            print(f"[PERF][simulation_context] step(): super().step(render={render}) took {_t.perf_counter() - _t0:.3f} s (call #{self._step_log_count})", flush=True)
 
         # app.update() may be changing the cuda device in step, so we force it back to our desired device here
         if "cuda" in self.device:
@@ -599,6 +615,9 @@ class SimulationContext(_SimulationContext):
             exception_to_raise = builtins.ISAACLAB_CALLBACK_EXCEPTION
             builtins.ISAACLAB_CALLBACK_EXCEPTION = None
             raise exception_to_raise
+        import time as _t
+
+        _t0 = _t.perf_counter()
         # check if we need to change the render mode
         if mode is not None:
             self.set_render_mode(mode)
@@ -618,13 +637,21 @@ class SimulationContext(_SimulationContext):
                 self.set_setting("/app/player/playSimulations", True)
         else:
             # manually flush the fabric data to update Hydra textures
+            _t1 = _t.perf_counter()
             self.forward()
             # render the simulation
+            _t2 = _t.perf_counter()
             # note: we don't call super().render() anymore because they do above operation inside
             #  and we don't want to do it twice. We may remove it once we drop support for Isaac Sim 2022.2.
             self.set_setting("/app/player/playSimulations", False)
             self._app.update()
             self.set_setting("/app/player/playSimulations", True)
+        # Throttle render() logging to every 50th call to avoid log flood
+        if not hasattr(self, "_render_log_count"):
+            self._render_log_count = 0
+        self._render_log_count += 1
+        if self._render_log_count <= 3 or self._render_log_count % 50 == 0:
+            print(f"[PERF][simulation_context] render() total took {_t.perf_counter() - _t0:.3f} s (call #{self._render_log_count})", flush=True)
 
         # app.update() may be changing the cuda device, so we force it back to our desired device here
         if "cuda" in self.device:
