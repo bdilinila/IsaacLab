@@ -527,14 +527,16 @@ class SimulationContext(_SimulationContext):
         if self.physics_sim_view:
             _t1 = _t.perf_counter()
             self.physics_sim_view._backend.initialize_kinematic_bodies()
-            print(f"[PERF][simulation_context] reset(): initialize_kinematic_bodies() took {_t.perf_counter() - _t1:.3f} s", flush=True)
+            elapsed = _t.perf_counter() - _t1
+            print(f"[PERF][simulation_context] reset(): initialize_kinematic_bodies() took {elapsed:.3f} s", flush=True)
         # perform additional rendering steps to warm up replicator buffers
         # this is only needed for the first time we set the simulation
         if not soft:
             for i in range(2):
                 _t2 = _t.perf_counter()
                 self.render()
-                print(f"[PERF][simulation_context] reset(): render() warmup {i+1}/2 took {_t.perf_counter() - _t2:.3f} s", flush=True)
+                elapsed = _t.perf_counter() - _t2
+                print(f"[PERF][simulation_context] reset(): render() warmup {i + 1}/2 took {elapsed:.3f} s", flush=True)
         self._disable_app_control_on_stop_handle = False
 
     def forward(self) -> None:
@@ -591,7 +593,12 @@ class SimulationContext(_SimulationContext):
             self._step_log_count = 0
         self._step_log_count += 1
         if self._step_log_count <= 3 or self._step_log_count % 100 == 0:
-            print(f"[PERF][simulation_context] step(): super().step(render={render}) took {_t.perf_counter() - _t0:.3f} s (call #{self._step_log_count})", flush=True)
+            elapsed = _t.perf_counter() - _t0
+            print(
+                f"[PERF][simulation_context] step(): super().step(render={render}) took {elapsed:.3f} s "
+                f"(call #{self._step_log_count})",
+                flush=True,
+            )
 
         # app.update() may be changing the cuda device in step, so we force it back to our desired device here
         if "cuda" in self.device:
@@ -650,7 +657,11 @@ class SimulationContext(_SimulationContext):
             self._render_log_count = 0
         self._render_log_count += 1
         if self._render_log_count <= 3 or self._render_log_count % 50 == 0:
-            print(f"[PERF][simulation_context] render() total took {_t.perf_counter() - _t0:.3f} s (call #{self._render_log_count})", flush=True)
+            elapsed = _t.perf_counter() - _t0
+            print(
+                f"[PERF][simulation_context] render() total took {elapsed:.3f} s (call #{self._render_log_count})",
+                flush=True,
+            )
 
         # app.update() may be changing the cuda device, so we force it back to our desired device here
         if "cuda" in self.device:
