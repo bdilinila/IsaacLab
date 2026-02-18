@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import torch
@@ -187,8 +190,14 @@ class TiledCamera(Camera):
             self._sensor_prims.append(UsdGeom.Camera(cam_prim))
             cam_prim_paths.append(cam_prim_path)
 
-        # Initialize renderer based on renderer_type
-        if self.cfg.renderer_type == "newton_warp":
+        # Initialize renderer based on renderer_type (None or "rtx" -> RTX; "newton_warp" -> Newton Warp)
+        _renderer_type = self.cfg.renderer_type if self.cfg.renderer_type is not None else "rtx"
+        if _renderer_type == "newton_warp":
+            logger.info(
+                "TiledCamera %s: using renderer backend newton_warp (from cfg.renderer_type=%s)",
+                self.cfg.prim_path,
+                self.cfg.renderer_type,
+            )
             # Use Newton Warp renderer
             from isaaclab.renderer import NewtonWarpRendererCfg, get_renderer_class
             from isaaclab.sim._impl.newton_manager import NewtonManager
@@ -214,6 +223,11 @@ class TiledCamera(Camera):
             self._annotators = dict()  # Not used with Newton Warp
         else:
             self._renderer = None
+            logger.info(
+                "TiledCamera %s: using renderer backend rtx (default); cfg.renderer_type=%s",
+                self.cfg.prim_path,
+                self.cfg.renderer_type,
+            )
 
         if self._renderer is None:
             # Create replicator tiled render product (RTX path)
