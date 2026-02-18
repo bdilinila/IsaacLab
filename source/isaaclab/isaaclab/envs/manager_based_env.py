@@ -143,13 +143,12 @@ class ManagerBasedEnv:
                 attach_stage_to_usd_context()
         print("[INFO]: Scene manager: ", self.scene)
 
-        # Set scene reference for Newton Warp renderer (PhysX -> Newton state sync)
         try:
             from isaaclab.sim._impl.newton_manager import NewtonManager
 
             NewtonManager.set_scene(self.scene)
-        except Exception:
-            pass  # Newton not used or not initialized yet
+        except ImportError:
+            pass  # Newton not installed
 
         # set up camera viewport controller
         # viewport is not available in other rendering modes so the function will throw a warning
