@@ -18,6 +18,7 @@ import carb
 from pxr import UsdGeom
 
 from isaaclab.sim.views import XformPrimView
+from isaaclab.utils.timer import Timer
 from isaaclab.utils.warp.kernels import reshape_tiled_image
 
 from ..sensor_base import SensorBase
@@ -273,9 +274,9 @@ class TiledCamera(Camera):
             # Sync PhysX -> Newton on GPU so robots/cube move in the image, then render
             from isaaclab.sim._impl.newton_manager import NewtonManager
 
-            NewtonManager.update_state_from_physx_tensors_gpu()
-
-            self._renderer.render(self._data.pos_w, self._data.quat_w_world, self._data.intrinsic_matrices)
+            with Timer(name="newton_warp_sync_plus_render", msg="Newton Warp (sync + render) took"):
+                NewtonManager.update_state_from_physx_tensors_gpu()
+                self._renderer.render(self._data.pos_w, self._data.quat_w_world, self._data.intrinsic_matrices)
 
             output = self._renderer.get_output()
             for data_type in self.cfg.data_types:
