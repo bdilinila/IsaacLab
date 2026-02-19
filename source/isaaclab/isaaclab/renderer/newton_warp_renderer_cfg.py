@@ -12,11 +12,11 @@ from .renderer_cfg import RendererCfg
 
 @configclass
 class NewtonWarpRendererCfg(RendererCfg):
-    """Configuration for the Newton Warp renderer.
+    """Configuration for the Warp renderer (Newton Warp implementation).
 
-    Use with ``TiledCameraCfg(renderer_type="newton_warp", ...)`` for Warp-based ray tracing
+    Use with ``TiledCameraCfg(renderer_type="warp_renderer", ...)`` for Warp-based ray tracing
     alongside PhysX simulation. Requires the ``newton`` package.
     """
 
-    renderer_type: str = "newton_warp"
-    """Type identifier for the Newton Warp renderer."""
+    renderer_type: str = "warp_renderer"
+    """Type identifier for the warp renderer (same as CLI --renderer_backend warp_renderer)."""

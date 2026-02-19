@@ -45,7 +45,7 @@ parser.add_argument(
     choices=("rtx", "warp_renderer"),
     help=(
         "Camera renderer backend: 'rtx' (RTX) or 'warp_renderer' (Newton Warp). "
-        "Sets env.scene variant unless overridden."
+        "Applied to env.scene after Hydra (env.scene chooses resolution/type only; legacy tiled/newton names normalized)."
     ),
 )
 # append RSL-RL cli arguments
@@ -58,17 +58,27 @@ args_cli, hydra_args = parser.parse_known_args()
 if args_cli.video:
     args_cli.enable_cameras = True
 
-# Set env.scene from --renderer_backend if user did not already pass env.scene
-_env_scene_override = None
-if not any(a.startswith("env.scene=") for a in hydra_args):
-    if args_cli.renderer_backend == "warp_renderer":
-        _env_scene_override = "64x64newton_rgb"
-        hydra_args = list(hydra_args) + ["env.scene=" + _env_scene_override]
-    else:
-        _env_scene_override = "64x64tiled_rgb"
-        hydra_args = list(hydra_args) + ["env.scene=" + _env_scene_override]
+# Resolve env.scene so it always matches --renderer_backend. When the user passes env.scene,
+# we override it to the equivalent variant for the chosen backend (preserving resolution and
+# type: depth/rgb/albedo; Newton has no albedo so tiled_albedo -> newton_rgb).
+_user_env_scene = next((a.split("=", 1)[1] for a in hydra_args if a.startswith("env.scene=")), None)
+
+
+def _scene_to_variant(scene_name: str) -> str:
+    """Normalize to variant name: 64x64newton_rgb -> 64x64tiled_rgb (same variant for both backends)."""
+    if "newton_" in scene_name:
+        return scene_name.replace("newton_", "tiled_")
+    return scene_name
+
+
+if _user_env_scene is None:
+    _env_scene_override = "64x64tiled_rgb"
 else:
-    _env_scene_override = next((a.split("=", 1)[1] for a in hydra_args if a.startswith("env.scene=")), None)
+    _env_scene_override = _scene_to_variant(_user_env_scene)
+
+# Replace or add env.scene in hydra_args so Hydra sees exactly one env.scene=
+hydra_args = [a for a in hydra_args if not a.startswith("env.scene=")]
+hydra_args = list(hydra_args) + ["env.scene=" + _env_scene_override]
 
 # clear out sys.argv for Hydra
 sys.argv = [sys.argv[0]] + hydra_args
@@ -104,15 +114,15 @@ if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
 import logging
 import os
 
-# One-time log so we can verify --renderer_backend drives env.scene (and thus TiledCamera renderer_type)
-if not any(a.startswith("env.scene=") for a in sys.argv[1:]):
+# One-time log: env.scene is tiled variant (e.g. 64x64tiled_rgb); renderer_type set in main() from --renderer_backend
+if _user_env_scene is None:
     print(
-        f"[train.py] renderer_backend={args_cli.renderer_backend!r} -> env.scene={_env_scene_override!r} (default)",
+        f"[train.py] env.scene={_env_scene_override!r} (default); renderer_backend={args_cli.renderer_backend!r} applied in main()",
         flush=True,
     )
 else:
     print(
-        f"[train.py] renderer_backend={args_cli.renderer_backend!r}; env.scene overridden by user",
+        f"[train.py] env.scene={_env_scene_override!r} (user had {_user_env_scene!r}); renderer_backend={args_cli.renderer_backend!r} applied in main()",
         flush=True,
     )
 import time
@@ -148,6 +158,34 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
+
+
+def _apply_renderer_backend_to_scene(scene_cfg, backend: str):
+    """Set scene and camera renderer_type from --renderer_backend (rtx vs warp_renderer)."""
+    renderer_type = "warp_renderer" if backend == "warp_renderer" else "rtx"
+    camera_value = None if renderer_type == "rtx" else renderer_type
+
+    if isinstance(scene_cfg, dict):
+        scene_cfg["renderer_type"] = renderer_type
+        if "base_camera" in scene_cfg:
+            bc = scene_cfg["base_camera"]
+            if isinstance(bc, dict):
+                bc["renderer_type"] = camera_value
+            elif hasattr(bc, "renderer_type"):
+                bc.renderer_type = camera_value
+        if "wrist_camera" in scene_cfg and scene_cfg["wrist_camera"] is not None:
+            wc = scene_cfg["wrist_camera"]
+            if isinstance(wc, dict):
+                wc["renderer_type"] = camera_value
+            elif hasattr(wc, "renderer_type"):
+                wc.renderer_type = camera_value
+        return
+    if not hasattr(scene_cfg, "renderer_type") or not hasattr(scene_cfg, "base_camera"):
+        return
+    scene_cfg.renderer_type = renderer_type
+    scene_cfg.base_camera.renderer_type = camera_value
+    if hasattr(scene_cfg, "wrist_camera") and scene_cfg.wrist_camera is not None:
+        scene_cfg.wrist_camera.renderer_type = scene_cfg.base_camera.renderer_type
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -205,6 +243,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
 
+    # Set renderer_type from --renderer_backend immediately before env creation so it is not overwritten
+    if hasattr(env_cfg, "scene") and env_cfg.scene is not None:
+        _apply_renderer_backend_to_scene(env_cfg.scene, args_cli.renderer_backend)
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
@@ -258,7 +299,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"Training time: {round(time.time() - start_time, 2)} seconds")
 
     # Print average sim/render timing when available; also written to run_artifacts/<timestamp>/timing_summary.txt.
-    # Newton Warp timers (newton_warp_sync_plus_render, etc.) only appear when using the Newton Warp renderer.
+    # Warp timers (newton_warp_*) only appear when using warp_renderer and when the camera path runs.
     try:
         timers = [
             ("simulate", "Sim (physics step)"),
@@ -268,6 +309,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             ("newton_warp_kernel_only", "Render (Warp kernel only)"),
         ]
         lines = []
+        warp_missing = False
         for name, label in timers:
             try:
                 s = Timer.get_timer_statistics(name)
@@ -276,6 +318,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 lines.append(f"  {label}: mean={mean_us:.2f} us  std={std_us:.2f} us  n={s['n']}")
             except TimerError:
                 lines.append(f"  {label}: (no data)")
+                if name.startswith("newton_warp"):
+                    warp_missing = True
+        if warp_missing and hasattr(Timer, "timing_info"):
+            lines.append(f"  [Debug] Recorded timer keys: {list(Timer.timing_info.keys())}")
         if lines:
             print("[Timing summary]")
             print("\n".join(lines))

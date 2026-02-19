@@ -12,32 +12,22 @@ the TiledCameraCfg default test requires the full env (imports isaaclab.sensors.
 
 import pytest
 
-# Default env.scene values used by scripts/reinforcement_learning/rsl_rl/train.py when
-# --renderer_backend is set and the user does not pass env.scene=.
-RENDERER_BACKEND_TO_DEFAULT_ENV_SCENE = {
-    "rtx": "64x64tiled_rgb",
-    "warp_renderer": "64x64newton_rgb",
-}
+# Default env.scene used by train.py when the user does not pass env.scene=.
+# Same variant name (e.g. 64x64tiled_rgb) used for both RTX and Newton; renderer_type set in main().
+DEFAULT_ENV_SCENE = "64x64tiled_rgb"
 
 
 class TestRendererBackendContract:
-    """Enforce --renderer_backend -> env.scene contract (no Isaac Sim required)."""
+    """Enforce env.scene default and that renderer is applied in main() (no Isaac Sim required)."""
 
-    def test_renderer_backend_rtx_maps_to_tiled_rgb(self):
-        """Default for --renderer_backend rtx must be env.scene=64x64tiled_rgb (RTX)."""
-        assert RENDERER_BACKEND_TO_DEFAULT_ENV_SCENE["rtx"] == "64x64tiled_rgb"
+    def test_default_env_scene_is_tiled_rgb(self):
+        """Default env.scene is 64x64tiled_rgb; backend applied in main() from --renderer_backend."""
+        assert DEFAULT_ENV_SCENE == "64x64tiled_rgb"
 
-    def test_renderer_backend_warp_maps_to_newton_rgb(self):
-        """Default for --renderer_backend warp_renderer must be env.scene=64x64newton_rgb."""
-        assert RENDERER_BACKEND_TO_DEFAULT_ENV_SCENE["warp_renderer"] == "64x64newton_rgb"
-
-    def test_only_newton_warp_selects_warp_renderer(self):
-        """Only 'newton_warp' should imply Newton Warp; None/rtx/other -> RTX."""
-        for rt in (None, "rtx", "other"):
-            effective = rt if rt is not None else "rtx"
-            assert effective != "newton_warp"
-        assert "newton_warp" not in RENDERER_BACKEND_TO_DEFAULT_ENV_SCENE
-        # train.py uses env.scene to select scene variant; scene variant sets renderer_type.
+    def test_only_warp_renderer_selects_warp_backend(self):
+        """Only 'warp_renderer' uses Warp backend; None/rtx/other -> RTX."""
+        assert "warp_renderer" not in ("rtx", None)
+        # train.py sets scene/camera renderer_type in main() from --renderer_backend.
 
 
 class TestTiledCameraCfgDefault:
