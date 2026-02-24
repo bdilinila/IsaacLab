@@ -131,6 +131,8 @@ class SimulationContext(_SimulationContext):
         # check that the config is valid
         cfg.validate()
         self.cfg = cfg
+        # Optional scene data provider (PhysX->Newton sync for Warp rendering); set on first use by NewtonWarpRenderer.
+        self._scene_data_provider = None
         # check that simulation is running
         if sim_utils.get_current_stage() is None:
             raise RuntimeError("The stage has not been created. Did you run the simulator?")
