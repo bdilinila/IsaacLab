@@ -76,7 +76,7 @@ class PhysxSceneDataProvider:
         self._xform_view_failures: set[str] = set()
         self._view_body_index_map: dict[str, list[int]] = {}
 
-        # Single source of truth: discovered from stage and cached once available.
+        # Discovered from stage and cached once available.
         self._num_envs: int | None = None
 
         viz_types = {getattr(cfg, "visualizer_type", None) for cfg in (visualizer_cfgs or [])}
@@ -150,7 +150,7 @@ class PhysxSceneDataProvider:
             self._newton_model = builder.finalize(device=self._device)
             self._newton_state = self._newton_model.state()
 
-            # Extract scene structure from Newton model (single source of truth)
+            # Extract scene structure from Newton model
             self._rigid_body_paths = list(self._newton_model.body_key)
             self._articulation_paths = list(self._newton_model.articulation_key)
 
