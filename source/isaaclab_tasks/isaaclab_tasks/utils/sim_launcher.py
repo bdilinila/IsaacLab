@@ -94,7 +94,9 @@ def launch_simulation(
     * Auto-enables ``enable_cameras`` when the scene contains camera sensors
       that use a Kit renderer (not Newton).
     * For Kit-based backends, launches ``AppLauncher`` and calls ``app.close()`` on exit.
-    * For kitless backends (e.g. Newton), this is a no-op.
+    * For kitless backends (e.g. Newton with Newton Warp renderer only), this is a no-op.
+    * For Newton Physics + RTX Renderer (with Kit cameras): Kit is launched
+      so that RTX can run; Newton syncs its state to the USD stage each step for rendering.
 
     Example::
 
@@ -102,7 +104,8 @@ def launch_simulation(
             main()
     """
     is_newton, has_kit_cameras = _scan_config(env_cfg, [_is_newton_physics, _is_kit_camera])
-    needs_kit = not is_newton
+    # For Newton Physics + RTX Renderer (with Kit cameras): start Kit so RTX can run; Newton will sync state to USD each step.
+    needs_kit = has_kit_cameras or not is_newton
 
     if needs_kit and has_kit_cameras:
         if isinstance(launcher_args, argparse.Namespace):
