@@ -32,7 +32,7 @@ class PhysicsCfg(PresetCfg):
 class MultiBackendRendererCfg(PresetCfg):
     default: IsaacRtxRendererCfg = IsaacRtxRendererCfg()
     newton_renderer: NewtonWarpRendererCfg = NewtonWarpRendererCfg()
-    ovrtx: IsaacRtxRendererCfg = default
+    isaac_sim_rtx: IsaacRtxRendererCfg = default
 
 @configclass
 class MultiDataTypeCartpoleTiledCameraCfg(PresetCfg):
