@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 import numpy as np
 import torch
+import nvtx
 import warp as wp
 
 # The ovrtx C library links to its own version of the USD libraries. Having
@@ -342,27 +343,28 @@ class OVRTXRenderer(BaseRenderer):
         if self._object_binding is None or self._object_newton_indices is None:
             return
 
-        try:
-            from isaaclab.sim import SimulationContext
+        with nvtx.annotate("OVRTXRenderer::update_transforms"):
+            try:
+                from isaaclab.sim import SimulationContext
 
-            provider = SimulationContext.instance().initialize_scene_data_provider()
-            newton_state = provider.get_newton_state()
-            if newton_state is None:
-                return
-            body_q = getattr(newton_state, "body_q", None)
-            if body_q is None:
-                return
+                provider = SimulationContext.instance().initialize_scene_data_provider()
+                newton_state = provider.get_newton_state()
+                if newton_state is None:
+                    return
+                body_q = getattr(newton_state, "body_q", None)
+                if body_q is None:
+                    return
 
-            with self._object_binding.map(device=Device.CUDA, device_id=0) as attr_mapping:
-                ovrtx_transforms = wp.from_dlpack(attr_mapping.tensor, dtype=wp.mat44d)
-                wp.launch(
-                    kernel=sync_newton_transforms_kernel,
-                    dim=len(self._object_newton_indices),
-                    inputs=[ovrtx_transforms, self._object_newton_indices, body_q],
-                    device=DEVICE,
-                )
-        except Exception as e:
-            logger.warning("Failed to update object transforms: %s", e)
+                with self._object_binding.map(device=Device.CUDA, device_id=0) as attr_mapping:
+                    ovrtx_transforms = wp.from_dlpack(attr_mapping.tensor, dtype=wp.mat44d)
+                    wp.launch(
+                        kernel=sync_newton_transforms_kernel,
+                        dim=len(self._object_newton_indices),
+                        inputs=[ovrtx_transforms, self._object_newton_indices, body_q],
+                        device=DEVICE,
+                    )
+            except Exception as e:
+                logger.warning("Failed to update object transforms: %s", e)
 
     def update_camera(
         self,
@@ -372,21 +374,24 @@ class OVRTXRenderer(BaseRenderer):
         intrinsics: torch.Tensor,
     ) -> None:
         """Update camera transforms in OVRTX binding."""
-        num_envs = positions.shape[0]
-        camera_quats_opengl = convert_camera_frame_orientation_convention(orientations, origin="world", target="opengl")
-        camera_positions_wp = wp.from_torch(positions.contiguous(), dtype=wp.vec3)
-        camera_orientations_wp = wp.from_torch(camera_quats_opengl.contiguous(), dtype=wp.quatf)
-        camera_transforms = wp.zeros(num_envs, dtype=wp.mat44d, device=DEVICE)
-        wp.launch(
-            kernel=create_camera_transforms_kernel,
-            dim=num_envs,
-            inputs=[camera_positions_wp, camera_orientations_wp, camera_transforms],
-            device=DEVICE,
-        )
-        if self._camera_binding is not None:
-            with self._camera_binding.map(device=Device.CUDA, device_id=0) as attr_mapping:
-                wp_transforms_view = wp.from_dlpack(attr_mapping.tensor, dtype=wp.mat44d)
-                wp.copy(wp_transforms_view, camera_transforms)
+        with nvtx.annotate("OVRTXRenderer::update_camera"):
+            num_envs = positions.shape[0]
+            camera_quats_opengl = convert_camera_frame_orientation_convention(
+                orientations, origin="world", target="opengl"
+            )
+            camera_positions_wp = wp.from_torch(positions.contiguous(), dtype=wp.vec3)
+            camera_orientations_wp = wp.from_torch(camera_quats_opengl.contiguous(), dtype=wp.quatf)
+            camera_transforms = wp.zeros(num_envs, dtype=wp.mat44d, device=DEVICE)
+            wp.launch(
+                kernel=create_camera_transforms_kernel,
+                dim=num_envs,
+                inputs=[camera_positions_wp, camera_orientations_wp, camera_transforms],
+                device=DEVICE,
+            )
+            if self._camera_binding is not None:
+                with self._camera_binding.map(device=Device.CUDA, device_id=0) as attr_mapping:
+                    wp_transforms_view = wp.from_dlpack(attr_mapping.tensor, dtype=wp.mat44d)
+                    wp.copy(wp_transforms_view, camera_transforms)
 
     def read_output(
         self,
@@ -490,7 +495,9 @@ class OVRTXRenderer(BaseRenderer):
         if "DiffuseAlbedoSD" in frame.render_vars and "albedo" in output_buffers:
             with frame.render_vars["DiffuseAlbedoSD"].map(device=Device.CUDA) as mapping:
                 tiled_albedo_data = wp.from_dlpack(mapping.tensor)
-                self._extract_rgba_tiles(render_data, tiled_albedo_data, output_buffers, "albedo", suffix="albedo")
+                self._extract_rgba_tiles(
+                    render_data, tiled_albedo_data, output_buffers, "albedo", suffix="albedo"
+                )
 
         if "SemanticSegmentation" in frame.render_vars and "semantic_segmentation" in output_buffers:
             with frame.render_vars["SemanticSegmentation"].map(device=Device.CUDA) as mapping:
@@ -522,20 +529,21 @@ class OVRTXRenderer(BaseRenderer):
             raise RuntimeError("Scene not initialized. Call initialize() first.")
         if self._renderer is None or len(self._render_product_paths) == 0:
             return
-        try:
-            products = self._renderer.step(
-                render_products=set(self._render_product_paths),
-                delta_time=1.0 / 60.0,
-            )
-            product_path = self._render_product_paths[0]
-            if product_path in products and len(products[product_path].frames) > 0:
-                self._process_render_frame(
-                    render_data,
-                    products[product_path].frames[0],
-                    render_data.warp_buffers,
+        with nvtx.annotate("OVRTXRenderer::render"):
+            try:
+                products = self._renderer.step(
+                    render_products=set(self._render_product_paths),
+                    delta_time=1.0 / 60.0,
                 )
-        except Exception as e:
-            logger.warning("OVRTX rendering failed: %s", e, exc_info=True)
+                product_path = self._render_product_paths[0]
+                if product_path in products and len(products[product_path].frames) > 0:
+                    self._process_render_frame(
+                        render_data,
+                        products[product_path].frames[0],
+                        render_data.warp_buffers,
+                    )
+            except Exception as e:
+                logger.warning("OVRTX rendering failed: %s", e, exc_info=True)
 
     def cleanup(self, render_data: OVRTXRenderData | None) -> None:
         """Release renderer resources. See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.cleanup`."""

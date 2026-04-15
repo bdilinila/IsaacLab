@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import newton
 import torch
+import nvtx
 import warp as wp
 
 from isaaclab.renderers import BaseRenderer
@@ -202,27 +203,30 @@ class NewtonWarpRenderer(BaseRenderer):
     def update_transforms(self):
         """Sync Newton scene state before rendering.
         See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.update_transforms`."""
-        SimulationContext.instance().update_scene_data_provider(True)
+        with nvtx.annotate("NewtonWarpRenderer::update_transforms"):
+            SimulationContext.instance().update_scene_data_provider(True)
 
     def update_camera(
         self, render_data: RenderData, positions: torch.Tensor, orientations: torch.Tensor, intrinsics: torch.Tensor
     ):
         """Update camera poses and intrinsics.
         See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.update_camera`."""
-        render_data.update(positions, orientations, intrinsics)
+        with nvtx.annotate("NewtonWarpRenderer::update_camera"):
+            render_data.update(positions, orientations, intrinsics)
 
     def render(self, render_data: RenderData):
         """Render and write to output buffers. See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.render`."""
-        self.newton_sensor.update(
-            self.get_scene_data_provider().get_newton_state(),
-            render_data.camera_transforms,
-            render_data.camera_rays,
-            color_image=render_data.outputs.color_image,
-            albedo_image=render_data.outputs.albedo_image,
-            depth_image=render_data.outputs.depth_image,
-            normal_image=render_data.outputs.normals_image,
-            shape_index_image=render_data.outputs.instance_segmentation_image,
-        )
+        with nvtx.annotate("NewtonWarpRenderer::render"):
+            self.newton_sensor.update(
+                self.get_scene_data_provider().get_newton_state(),
+                render_data.camera_transforms,
+                render_data.camera_rays,
+                color_image=render_data.outputs.color_image,
+                albedo_image=render_data.outputs.albedo_image,
+                depth_image=render_data.outputs.depth_image,
+                normal_image=render_data.outputs.normals_image,
+                shape_index_image=render_data.outputs.instance_segmentation_image,
+            )
 
     def read_output(self, render_data: RenderData, camera_data: CameraData) -> None:
         """Copy rendered outputs to the camera data buffers.

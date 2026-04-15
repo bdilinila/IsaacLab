@@ -12,10 +12,21 @@ import os
 import sys
 import time
 
+# Must be set before `import nvtx` since nvtx reads NVTX_DISABLE at import time.
+if "--disable-nvtx" in sys.argv:
+    os.environ["NVTX_DISABLE"] = "1"
+    sys.argv.remove("--disable-nvtx")
+
+import nvtx
+
 from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RL-Games.")
+parser.add_argument(
+    "--disable-nvtx", action="store_true", default=False,
+    help="Disable NVTX instrumentation (no-ops all push_range/pop_range calls)."
+)
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
@@ -291,9 +302,19 @@ def main(
 
 
 if __name__ == "__main__":
-    env_cfg, agent_cfg = resolve_task_config(args_cli.task, "rl_games_cfg_entry_point")
+    nvtx.push_range("benchmark::total")
+    _total_start = time.perf_counter()
+    try:
+        env_cfg, agent_cfg = resolve_task_config(args_cli.task, "rl_games_cfg_entry_point")
 
-    app_start_time_begin = time.perf_counter_ns()
-    with launch_simulation(env_cfg, args_cli):
-        app_start_time_end = time.perf_counter_ns()
-        main(env_cfg, agent_cfg, app_start_time_begin, app_start_time_end)
+        app_start_time_begin = time.perf_counter_ns()
+        nvtx.push_range("benchmark::init")
+        with launch_simulation(env_cfg, args_cli):
+            app_start_time_end = time.perf_counter_ns()
+            nvtx.pop_range()  # benchmark::init
+            nvtx.push_range("benchmark::train")
+            main(env_cfg, agent_cfg, app_start_time_begin, app_start_time_end)
+            nvtx.pop_range()  # benchmark::train
+    finally:
+        nvtx.pop_range()  # benchmark::total
+        print(f"[benchmark::total] Elapsed: {time.perf_counter() - _total_start:.2f} seconds")
