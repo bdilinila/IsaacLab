@@ -13,9 +13,16 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import newton
+import os
 import torch
 import nvtx
 import warp as wp
+from contextlib import nullcontext
+
+# Renderer-level NVTX ranges (update_transforms, update_camera, render) are
+# gated by RENDERER_NVTX=1. benchmark::total/train/init from the benchmark
+# script always fire regardless, giving a consistent wall-clock baseline.
+_renderer_annotate = nvtx.annotate if os.getenv("RENDERER_NVTX", "0") == "1" else lambda *a, **kw: nullcontext()
 
 from isaaclab.renderers import BaseRenderer
 from isaaclab.sim import SimulationContext
@@ -203,7 +210,7 @@ class NewtonWarpRenderer(BaseRenderer):
     def update_transforms(self):
         """Sync Newton scene state before rendering.
         See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.update_transforms`."""
-        with nvtx.annotate("NewtonWarpRenderer::update_transforms"):
+        with _renderer_annotate("NewtonWarpRenderer::update_transforms"):
             SimulationContext.instance().update_scene_data_provider(True)
 
     def update_camera(
@@ -211,12 +218,12 @@ class NewtonWarpRenderer(BaseRenderer):
     ):
         """Update camera poses and intrinsics.
         See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.update_camera`."""
-        with nvtx.annotate("NewtonWarpRenderer::update_camera"):
+        with _renderer_annotate("NewtonWarpRenderer::update_camera"):
             render_data.update(positions, orientations, intrinsics)
 
     def render(self, render_data: RenderData):
         """Render and write to output buffers. See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.render`."""
-        with nvtx.annotate("NewtonWarpRenderer::render"):
+        with _renderer_annotate("NewtonWarpRenderer::render"):
             self.newton_sensor.update(
                 self.get_scene_data_provider().get_newton_state(),
                 render_data.camera_transforms,

@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 import numpy as np
 import torch
 import nvtx
+from contextlib import nullcontext
+
+# Renderer-level NVTX ranges (update_transforms, update_camera, render) are
+# gated by RENDERER_NVTX=1. benchmark::total/train/init from the benchmark
+# script always fire regardless, giving a consistent wall-clock baseline.
+_renderer_annotate = nvtx.annotate if os.getenv("RENDERER_NVTX", "0") == "1" else lambda *a, **kw: nullcontext()
 import warp as wp
 
 # The ovrtx C library links to its own version of the USD libraries. Having
@@ -343,7 +349,7 @@ class OVRTXRenderer(BaseRenderer):
         if self._object_binding is None or self._object_newton_indices is None:
             return
 
-        with nvtx.annotate("OVRTXRenderer::update_transforms"):
+        with _renderer_annotate("OVRTXRenderer::update_transforms"):
             try:
                 from isaaclab.sim import SimulationContext
 
@@ -374,7 +380,7 @@ class OVRTXRenderer(BaseRenderer):
         intrinsics: torch.Tensor,
     ) -> None:
         """Update camera transforms in OVRTX binding."""
-        with nvtx.annotate("OVRTXRenderer::update_camera"):
+        with _renderer_annotate("OVRTXRenderer::update_camera"):
             num_envs = positions.shape[0]
             camera_quats_opengl = convert_camera_frame_orientation_convention(
                 orientations, origin="world", target="opengl"
@@ -529,7 +535,7 @@ class OVRTXRenderer(BaseRenderer):
             raise RuntimeError("Scene not initialized. Call initialize() first.")
         if self._renderer is None or len(self._render_product_paths) == 0:
             return
-        with nvtx.annotate("OVRTXRenderer::render"):
+        with _renderer_annotate("OVRTXRenderer::render"):
             try:
                 products = self._renderer.step(
                     render_products=set(self._render_product_paths),
